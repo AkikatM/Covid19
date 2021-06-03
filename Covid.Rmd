@@ -1,0 +1,230 @@
+---
+title: "Covid 19 data"
+author: "Akikat"
+date: "6/2/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Covid 19 data analysis
+
+This is a template for analysis of Covid 19 data gathered in US. Source of the data: COVID-19 Data Repository by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University <https://github.com/CSSEGISandData/COVID-19>.
+
+
+### Project setup
+
+In order to reproduce the analysis following libraries should be used:
+
+```{r necessary libraries}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+
+### Loading data
+
+Next code chuck takes care of data downloading from website.
+
+```{r loading data}
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_US.csv","time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_recovered_global.csv")
+
+urls <- str_c(url_in, file_names)
+
+
+global_cases <- read.csv(urls[2], head = TRUE, sep=",", check.names=FALSE)
+global_deaths <- read.csv(urls[4], sep=",", check.names=FALSE)
+us_cases <- read.csv(urls[1], check.names=FALSE)
+us_deaths <- read.csv(urls[3], check.names=FALSE)
+global_recovered <- read.csv(urls[5], check.names=FALSE)
+
+
+```
+
+### Prepare data
+
+Prior to analysis sata needs to be manipulated. Columns unnecessary for analysis are removed.
+Pivot longer function allows to see statistical change over time.
+Population data is added to the dataset to make analysis more relevant.
+
+```{r data preparation}
+
+global_cases <-  global_cases[c(-3, -4)]
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c(1:2), 
+               names_to = "date",
+               values_to = "cases")
+
+global_deaths <-  global_deaths[c(-3, -4)]
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c(1:2), 
+               names_to = "date",
+               values_to = "deaths")
+
+global <- global_cases %>%
+  full_join(global_deaths)  %>%
+  rename(Country_Region = "Country/Region",
+         Province_State = "Province/State") %>%
+  mutate(date = mdy(date))
+
+global <- global %>% filter(cases > 0)
+
+
+us_cases <- us_cases[c(-(1:5))]
+us_cases <- us_cases[c(-(4:5))]
+
+us_cases <- us_cases %>%
+  pivot_longer(cols = -c(1:4),
+                         names_to = "date",
+                       values_to = "cases")
+us_cases <- us_cases %>%
+  mutate(date = mdy(date))
+
+
+us_deaths <- us_deaths[c(-(1:5))]
+us_deaths <- us_deaths[c(-(4:5))]
+
+us_deaths <- us_deaths %>%
+  pivot_longer(cols = -c(1:5),
+               names_to = "date",
+               values_to = "deaths")%>%
+  mutate(date = mdy(date))
+
+US <- us_cases %>%
+  full_join(us_deaths)  %>%
+  rename(Country_Region = "Country_Region",
+         Province_State = "Province_State") 
+
+global <- global %>%
+  unite("Combined key",
+        c(Province_State, Country_Region),
+        sep = ",",
+        na.rm = TRUE,
+        remove = FALSE)
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read.csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, iso2, iso3, Admin2, code3))
+
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, 'Combined key')
+
+```
+
+
+### Visualizations
+
+Initial view on number of cases and mortality rates are visualized with the help of ggplot2 library.
+
+The following plots show mortality, that is the death rate compared to number of registered cases. Basically, this shows how dangerous it is to get Covid 19.
+
+```{r Visualizations}
+
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population))  %>%
+  mutate(deaths_per_mill = deaths*1000000/Population, mortality = deaths/cases) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population, mortality) %>%
+  ungroup()
+
+US_Totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population))  %>%
+  mutate(deaths_per_mill = deaths*1000000/Population,  mortality = deaths/cases) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population, mortality) %>%
+  ungroup()
+
+
+US_Totals %>%
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(color="cases")) + 
+  geom_line(aes(y = mortality, color="mortality")) +
+  geom_point(aes(y = mortality, color="mortality")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
+  labs(title = "Covid19 Mortality in US", y = NULL)
+
+state <- "Northern Mariana Islands"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(color="cases")) + 
+  geom_line(aes(y = mortality, color="mortality")) +
+  geom_point(aes(y = mortality, color="mortality")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
+  labs(title=str_c("Covid19 Mortality in ", state), y = NULL)
+
+US_by_state <- US_by_state %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+US_Totals <- US_Totals %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+tail(US_Totals %>% select(new_cases, new_deaths, everything()))
+
+
+US_state_totals <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(deaths), cases = max(cases), Population = max(Population),
+            cases_per_thou = cases * 1000 / Population, deaths_per_thou = deaths * 1000/Population, mortality) %>%
+  filter(cases>0, Population >0)
+
+
+```
+
+### Modeling
+
+Simple predictive model was used to compare actual mortality data with expected mortality rate.
+
+```{r Modeling}
+mod <- lm(mortality ~ cases, data = US_Totals)
+summary(mod)
+
+
+x_grid <- seq(1, 151)
+new_df <- tibble(cases_per_thou = x_grid)
+US_Totals %>% mutate(pred = predict(mod))
+
+US_total_with_pred <- US_Totals %>% mutate(pred = predict(mod))
+
+
+US_total_with_pred %>% ggplot() +
+  geom_point(aes(x = cases, y = mortality), color = "red") +
+  geom_point(aes(x = cases, y = pred), color = "blue") 
+
+
+```
+
+### Results
+
+We see that after a rapid rise of infection there is a tendency to plateau. Also, despite the rise of number of cases, mortality rate is falling. Which can be explained by general rise in awareness, better medical procedures.
+We see that predictive model and actual mortality rates match quite ok as time goes by.
+
+### Source of bias
+
+There are still fluctations that can be explained by a lot of factors, including local policies, lockdown practices, traditional models of interactions within communitities of various states. All these parameters are hidden when we consider big picture. And they can affect the results a lot.
+Therefore, better approach would be to analyse smaller regions separately. This would allow to find better remedies and strategies to infection spread.
+
+
+```{r session info, echo=TRUE}
+ sessionInfo()
+```
+
